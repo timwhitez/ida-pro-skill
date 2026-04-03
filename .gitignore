@@ -1,0 +1,38 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+.venv/
+.idea/
+.vscode/
+
+# Private spec and local design artifacts
+spec/
+
+# IDA artifacts and samples
+*.i64
+*.idb
+*.til
+*.nam
+*.asm
+*.lst
+*.dmp
+samples/
+artifacts/
+
+# Secrets and env
+.env
+.env.*
+*.secret
+*.token
+
+# Installer and runtime state
+.ida-pro-skill/
+state/
