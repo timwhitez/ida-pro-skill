@@ -28,6 +28,13 @@ import ida_xref
 import idautils
 import idc
 
+from ida_pro_skill_plugin_runtime.access import (
+    REMOTE_DISABLED_ERROR,
+    access_mode,
+    advertised_ipv4_hosts,
+    is_client_allowed,
+)
+
 APP_HOME = Path(os.environ.get("IDA_PRO_SKILL_HOME", str(Path.home() / ".ida-pro-skill")))
 INSTANCE_DIR = APP_HOME / "instances"
 LISTEN_HOST = "0.0.0.0"
@@ -85,6 +92,8 @@ class _BridgeHandler(BaseHTTPRequestHandler):
     bridge = None
 
     def do_GET(self):  # pragma: no cover - IDA runtime only
+        if not self._ensure_client_allowed():
+            return
         try:
             if self.path == "/health":
                 result = _run_on_main_thread(lambda: self.bridge.health())
@@ -100,6 +109,8 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         self._write(404, _json_result(False, error="Unknown path"))
 
     def do_POST(self):  # pragma: no cover - IDA runtime only
+        if not self._ensure_client_allowed():
+            return
         if self.path != "/tool":
             self._write(404, _json_result(False, error="Unknown path"))
             return
@@ -123,14 +134,22 @@ class _BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _ensure_client_allowed(self) -> bool:
+        client_ip = self.client_address[0]
+        if self.bridge.is_client_allowed(client_ip):
+            return True
+        self._write(403, _json_result(False, error=REMOTE_DISABLED_ERROR))
+        return False
+
 
 class BridgeServer:
-    def __init__(self) -> None:
+    def __init__(self, *, remote_access: bool = False) -> None:
         self.httpd: ThreadingHTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.port: int | None = None
         self.instance_path: Path | None = None
         self.started_at = _now()
+        self.remote_access = bool(remote_access)
         self.tool_map = {
             "list_tools": self.manifest,
             "get_metadata": self.get_metadata,
@@ -189,7 +208,7 @@ class BridgeServer:
         payload = self.health()
         payload["instance_id"] = f"{os.getpid()}:{self.port}"
         payload["host"] = "127.0.0.1"
-        payload["host_candidates"] = _advertised_ipv4_hosts()
+        payload["host_candidates"] = advertised_ipv4_hosts()
         payload["port"] = self.port
         self.instance_path = INSTANCE_DIR / f"{os.getpid()}_{self.port}.json"
         self.instance_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -198,12 +217,21 @@ class BridgeServer:
         return {
             "tools": sorted(self.tool_map.keys()),
             "started_at": self.started_at,
+            "remote_access_enabled": self.remote_access,
+            "access_mode": access_mode(self.remote_access),
         }
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         if name not in self.tool_map:
             raise RuntimeError(f"Unknown tool: {name}")
         return _run_on_main_thread(lambda: self.tool_map[name](arguments or {}))
+
+    def is_client_allowed(self, client_ip: str) -> bool:
+        return is_client_allowed(
+            client_ip,
+            remote_access=self.remote_access,
+            advertised_hosts=advertised_ipv4_hosts(),
+        )
 
     def health(self) -> dict[str, Any]:
         input_path = ida_nalt.get_input_file_path() or ""
@@ -220,7 +248,9 @@ class BridgeServer:
             "imagebase": hex(ida_nalt.get_imagebase()),
             "md5": md5_text,
             "listen_host": LISTEN_HOST,
-            "host_candidates": _advertised_ipv4_hosts(),
+            "host_candidates": advertised_ipv4_hosts(),
+            "remote_access_enabled": self.remote_access,
+            "access_mode": access_mode(self.remote_access),
         }
 
     def get_metadata(self, _: dict[str, Any]) -> dict[str, Any]:
@@ -654,31 +684,6 @@ def _execute_python(code: str, file_name: str = "<string>") -> dict[str, Any]:
         "stderr": stderr_capture.getvalue(),
     }
 
-
-def _advertised_ipv4_hosts() -> list[str]:
-    result = ["127.0.0.1"]
-    try:
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            udp.connect(("8.8.8.8", 80))
-            candidate = udp.getsockname()[0]
-            if candidate and candidate not in result:
-                result.append(candidate)
-        finally:
-            udp.close()
-    except OSError:
-        pass
-
-    try:
-        for entry in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_STREAM):
-            candidate = entry[4][0]
-            if candidate and candidate not in result:
-                result.append(candidate)
-    except OSError:
-        pass
-    return result
-
-
 def ida_idaapi_get_procname() -> str:
     try:
         return idaapi.get_idp_name()
@@ -693,16 +698,16 @@ class IdaProSkillBridgePlugin(idaapi.plugin_t):  # pragma: no cover - IDA runtim
     wanted_name = "ida-pro-skill"
     wanted_hotkey = ""
 
-    def __init__(self):
+    def __init__(self, *, remote_access: bool = False):
         super().__init__()
-        self.bridge = BridgeServer()
+        self.bridge = BridgeServer(remote_access=remote_access)
 
     def init(self):
         try:
             self.bridge.start()
             ida_kernwin.msg(
                 f"[ida-pro-skill] bridge started on {LISTEN_HOST}:{self.bridge.port} "
-                f"(hosts: {', '.join(_advertised_ipv4_hosts())})\n"
+                f"(hosts: {', '.join(advertised_ipv4_hosts())}, access: {access_mode(self.bridge.remote_access)})\n"
             )
             return idaapi.PLUGIN_KEEP
         except Exception as exc:
@@ -712,7 +717,7 @@ class IdaProSkillBridgePlugin(idaapi.plugin_t):  # pragma: no cover - IDA runtim
     def run(self, arg):
         ida_kernwin.msg(
             f"[ida-pro-skill] active on {LISTEN_HOST}:{self.bridge.port} "
-            f"(hosts: {', '.join(_advertised_ipv4_hosts())})\n"
+            f"(hosts: {', '.join(advertised_ipv4_hosts())}, access: {access_mode(self.bridge.remote_access)})\n"
         )
 
     def term(self):

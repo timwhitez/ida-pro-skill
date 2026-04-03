@@ -2,7 +2,7 @@
 
 ## Recommended sequence
 
-1. Run `python scripts/run_cli.py ida list-instances`.
+1. Run `python3 scripts/run_cli.py ida list-instances`.
 2. Select the intended IDA instance when more than one is active.
 3. Start with `ida metadata`, `ida cursor`, `ida selection`, `ida tools`,
    `ida segments`, and `ida entrypoints`.

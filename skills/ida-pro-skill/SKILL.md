@@ -1,12 +1,12 @@
 ---
 name: ida-pro-skill
-description: IDA Pro reverse-engineering skill for Codex and Claude Code. Use when a user wants analysis against a live IDA database or Hex-Rays view, especially for metadata, cursor or selection context, entrypoints, functions, callers, imports, strings, xrefs, pseudocode, globals, structs, renames, comments, byte patches, function creation, or explicit IDAPython through the local ida-pro-skill CLI and installed IDA bridge, including WSL-to-Windows IDA setups.
+description: IDA Pro reverse-engineering skill for Codex, Claude Code, and OpenCode. Use when a user wants analysis against a live IDA database or Hex-Rays view, especially for metadata, cursor or selection context, entrypoints, functions, callers, imports, strings, xrefs, pseudocode, globals, structs, renames, comments, byte patches, function creation, or explicit IDAPython through the local ida-pro-skill CLI and installed IDA bridge, including WSL-to-Windows IDA setups.
 ---
 
 # ida-pro-skill
 
-Use this skill when the user wants IDA Pro driven static analysis from Codex or
-Claude Code.
+Use this skill when the user wants IDA Pro driven static analysis from Codex,
+Claude Code, or OpenCode.
 
 If the skill is not installed yet, the supported repo entrypoint is root
 `./install.sh`.
@@ -20,30 +20,30 @@ If the skill is not installed yet, the supported repo entrypoint is root
 ## Workflow
 
 1. Confirm the local installation if needed:
-   `python scripts/run_cli.py doctor`
+   `python3 scripts/run_cli.py doctor`
 2. Discover live IDA instances:
-   `python scripts/run_cli.py ida list-instances`
+   `python3 scripts/run_cli.py ida list-instances`
 3. If multiple instances are running, select one:
-   `python scripts/run_cli.py ida select --instance 127.0.0.1:39091`
+   `python3 scripts/run_cli.py ida select --instance 127.0.0.1:39091`
 4. Prefer the short alias commands over raw JSON-heavy `ida tool ...` calls:
-   `python scripts/run_cli.py ida metadata`
-   `python scripts/run_cli.py ida cursor`
-   `python scripts/run_cli.py ida selection`
-   `python scripts/run_cli.py ida tools`
-   `python scripts/run_cli.py ida functions --limit 20`
-   `python scripts/run_cli.py ida decompile 0x401000`
-   `python scripts/run_cli.py ida imports --query OpenService`
-   `python scripts/run_cli.py ida import-callers OpenService`
-   `python scripts/run_cli.py ida string-xrefs uninstall`
-   `python scripts/run_cli.py ida structs --query IMAGE --limit 20`
-   `python scripts/run_cli.py ida struct IMAGE_DOS_HEADER`
-   `python scripts/run_cli.py ida patch-bytes 0x401000 "90 90"`
-   `python scripts/run_cli.py ida define-function 0x401000`
+   `python3 scripts/run_cli.py ida metadata`
+   `python3 scripts/run_cli.py ida cursor`
+   `python3 scripts/run_cli.py ida selection`
+   `python3 scripts/run_cli.py ida tools`
+   `python3 scripts/run_cli.py ida functions --limit 20`
+   `python3 scripts/run_cli.py ida decompile 0x401000`
+   `python3 scripts/run_cli.py ida imports --query OpenService`
+   `python3 scripts/run_cli.py ida import-callers OpenService`
+   `python3 scripts/run_cli.py ida string-xrefs uninstall`
+   `python3 scripts/run_cli.py ida structs --query IMAGE --limit 20`
+   `python3 scripts/run_cli.py ida struct IMAGE_DOS_HEADER`
+   `python3 scripts/run_cli.py ida patch-bytes 0x401000 "90 90"`
+   `python3 scripts/run_cli.py ida define-function 0x401000`
 5. Use `ida tool ...` only for advanced or not-yet-aliased operations.
 6. Use explicit Python only when the built-in tools are not enough:
-   `python scripts/run_cli.py ida py-eval "print(hex(here()))"`
-   `cat script.py | python scripts/run_cli.py ida py-eval --stdin`
-   `python scripts/run_cli.py ida py-file /tmp/script.py`
+   `python3 scripts/run_cli.py ida py-eval "print(hex(here()))"`
+   `cat script.py | python3 scripts/run_cli.py ida py-eval --stdin`
+   `python3 scripts/run_cli.py ida py-file /tmp/script.py`
 
 ## Preferred tool order
 
@@ -72,6 +72,9 @@ If the skill is not installed yet, the supported repo entrypoint is root
   CLI auto-selects it.
 - The CLI is WSL-aware and can reach a Windows-hosted IDA bridge through the
   advertised host candidates; do not assume `127.0.0.1` will work from WSL.
+- The plugin now defaults to `REMOTE_ACCESS = False`; this still allows
+  localhost and local WSL access, but intentionally rejects other machines
+  unless the user explicitly enables remote access in the plugin file.
 - Prefer one bridge call at a time for heavier work such as `decompile` or
   `py-eval`; the CLI no longer requires a fresh health probe for every tool
   call, but serial reads are still easier on a live IDA session.

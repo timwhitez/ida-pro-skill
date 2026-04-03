@@ -57,8 +57,14 @@ IDA Pro Skill 集成项目。
 安装并自动复制 plugin 到指定 IDA 插件目录：
 
 ```bash
-./install.sh --ida-plugin-dir "/mnt/c/Program Files/IDA Professional 9.1/plugins"
+./install.sh --ida-plugin-dir "/path/to/your/ida/plugins"
 ```
+
+注意：
+
+- `--ida-plugin-dir` 没有默认值，必须由用户传入自己的真实 IDA plugins 目录
+- 在 WSL 下，如果目标目录位于 Windows 受保护路径，自动复制 plugin 可能因权限失败
+- 即使自动复制失败，skill 仍会安装完成，脚本会继续输出手动复制与启用指引
 
 只安装指定客户端：
 
@@ -86,11 +92,11 @@ IDA Pro Skill 集成项目。
 - `plugin/ida_pro_skill_plugin.py`
 - `plugin/ida_pro_skill_plugin_runtime/`
 
-WSL 到 Windows 的典型示例：
+手动复制时，请把下面的占位符替换为你自己的真实 IDA plugins 目录：
 
 ```bash
-cp plugin/ida_pro_skill_plugin.py "/mnt/c/Program Files/IDA Professional 9.1/plugins/"
-cp -R plugin/ida_pro_skill_plugin_runtime "/mnt/c/Program Files/IDA Professional 9.1/plugins/"
+cp plugin/ida_pro_skill_plugin.py "/path/to/your/ida/plugins/"
+cp -R plugin/ida_pro_skill_plugin_runtime "/path/to/your/ida/plugins/"
 ```
 
 ### Plugin 启用
@@ -105,6 +111,12 @@ cp -R plugin/ida_pro_skill_plugin_runtime "/mnt/c/Program Files/IDA Professional
    `Edit -> Plugins -> ida-pro-skill`
 
 这个插件会在 IDA 插件初始化时自动启动，菜单项更多用于状态确认。
+
+默认安全行为：
+
+- plugin 默认使用 `REMOTE_ACCESS = False`
+- 即使 bridge 监听在 `0.0.0.0`，默认也只允许本机和本机 WSL 发起访问
+- 如果你明确需要让其他机器访问，请先编辑 `plugin/ida_pro_skill_plugin.py`，将 `REMOTE_ACCESS` 改为 `True`，再重新复制并重启 IDA
 
 ### 首次验证
 
@@ -142,7 +154,7 @@ python3 skills/ida-pro-skill/scripts/run_cli.py ida tools
 python3 skills/ida-pro-skill/scripts/run_cli.py ida functions --limit 20
 python3 skills/ida-pro-skill/scripts/run_cli.py ida import-callers LoadLibraryExW
 python3 skills/ida-pro-skill/scripts/run_cli.py ida string-xrefs kernel32.dll
-python3 skills/ida-pro-skill/scripts/run_cli.py ida decompile 0x1802092a0
+python3 skills/ida-pro-skill/scripts/run_cli.py ida decompile 0x401000
 python3 skills/ida-pro-skill/scripts/run_cli.py ida structs --query GUID --limit 10
 python3 skills/ida-pro-skill/scripts/run_cli.py ida struct GUID
 printf 'print(hex(0x401000))\n' | python3 skills/ida-pro-skill/scripts/run_cli.py ida py-eval --stdin
@@ -183,6 +195,8 @@ PYTHONPATH=skills/ida-pro-skill python3 -m ida_pro_skill doctor
 
 - 默认工作流仅面向静态分析
 - 在 IDA 内执行 Python 明显高于内置 bridge 工具的风险级别
+- plugin 默认使用 `REMOTE_ACCESS = False`；这意味着即使监听在 `0.0.0.0`，
+  也只对本机和本机 WSL 保持可达，而不会默认对其他机器开放
 - 用户仍需自行承担二进制分析中的法律、许可和策略合规责任
 
 ## English
@@ -242,8 +256,14 @@ Install into all supported clients:
 Install and automatically copy the plugin into a known IDA plugins directory:
 
 ```bash
-./install.sh --ida-plugin-dir "/mnt/c/Program Files/IDA Professional 9.1/plugins"
+./install.sh --ida-plugin-dir "/path/to/your/ida/plugins"
 ```
+
+Notes:
+
+- `--ida-plugin-dir` has no default value; you must pass your own real IDA plugins directory
+- In WSL, automatic plugin copy may fail if the target directory is a protected Windows path
+- Even if automatic plugin copy fails, the skill installation still completes and the script continues to print the manual copy and activation steps
 
 Install only selected clients:
 
@@ -271,11 +291,11 @@ If you do not pass `--ida-plugin-dir`, manually copy:
 - `plugin/ida_pro_skill_plugin.py`
 - `plugin/ida_pro_skill_plugin_runtime/`
 
-Typical WSL to Windows example:
+When copying manually, replace the placeholder below with your own real IDA plugins directory:
 
 ```bash
-cp plugin/ida_pro_skill_plugin.py "/mnt/c/Program Files/IDA Professional 9.1/plugins/"
-cp -R plugin/ida_pro_skill_plugin_runtime "/mnt/c/Program Files/IDA Professional 9.1/plugins/"
+cp plugin/ida_pro_skill_plugin.py "/path/to/your/ida/plugins/"
+cp -R plugin/ida_pro_skill_plugin_runtime "/path/to/your/ida/plugins/"
 ```
 
 ### Plugin Enable
@@ -291,6 +311,15 @@ After copying the plugin:
 
 The plugin starts during IDA plugin initialization. The menu item is mainly for
 manual confirmation.
+
+Default security behavior:
+
+- The plugin defaults to `REMOTE_ACCESS = False`
+- Even when the bridge listens on `0.0.0.0`, it only allows localhost and this
+  machine's local WSL or Windows addresses by default
+- If you intentionally want external machines to connect, edit
+  `plugin/ida_pro_skill_plugin.py`, set `REMOTE_ACCESS = True`, recopy the
+  plugin, and restart IDA
 
 ### First Verification
 
@@ -329,7 +358,7 @@ python3 skills/ida-pro-skill/scripts/run_cli.py ida tools
 python3 skills/ida-pro-skill/scripts/run_cli.py ida functions --limit 20
 python3 skills/ida-pro-skill/scripts/run_cli.py ida import-callers LoadLibraryExW
 python3 skills/ida-pro-skill/scripts/run_cli.py ida string-xrefs kernel32.dll
-python3 skills/ida-pro-skill/scripts/run_cli.py ida decompile 0x1802092a0
+python3 skills/ida-pro-skill/scripts/run_cli.py ida decompile 0x401000
 python3 skills/ida-pro-skill/scripts/run_cli.py ida structs --query GUID --limit 10
 python3 skills/ida-pro-skill/scripts/run_cli.py ida struct GUID
 printf 'print(hex(0x401000))\n' | python3 skills/ida-pro-skill/scripts/run_cli.py ida py-eval --stdin
@@ -371,6 +400,9 @@ PYTHONPATH=skills/ida-pro-skill python3 -m ida_pro_skill doctor
 
 - The default workflow is static analysis only
 - Python execution inside IDA is higher risk than built-in bridge tools
+- The plugin defaults to `REMOTE_ACCESS = False`, which keeps `0.0.0.0`
+  reachable for localhost and local WSL use without opening the bridge to other
+  machines by default
 - Users remain responsible for legal, licensing, and policy compliance
 
 ## License

@@ -2,7 +2,7 @@
 
 ## Instance discovery
 
-- Run `python scripts/run_cli.py ida list-instances` to see the discovered bridge
+- Run `python3 scripts/run_cli.py ida list-instances` to see the discovered bridge
   instances and their reachable hosts.
 - In WSL, do not assume `127.0.0.1` can reach a Windows-hosted IDA bridge. The
   CLI will try the bridge's advertised host candidates.
@@ -23,16 +23,19 @@
 
 ## Python helpers
 
-- Use `python scripts/run_cli.py ida py-eval "print(hex(here()))"` for short
+- Use `python3 scripts/run_cli.py ida py-eval "print(hex(here()))"` for short
   one-liners.
-- Use `cat script.py | python scripts/run_cli.py ida py-eval --stdin` for
+- Use `cat script.py | python3 scripts/run_cli.py ida py-eval --stdin` for
   multiline snippets that would be awkward to shell-quote.
-- Use `python scripts/run_cli.py ida py-file /path/to/script.py` when the code
+- Use `python3 scripts/run_cli.py ida py-file /path/to/script.py` when the code
   already exists in a local file.
 
 ## Plugin install on WSL
 
-- On WSL, pass `--ida-plugin-dir "/mnt/c/.../plugins"` when the Windows IDA
-  plugins directory is known when you run root `install.sh`.
+- On WSL, pass `--ida-plugin-dir "/path/to/your/ida/plugins"` when you know
+  the real Windows-side IDA plugins directory.
 - If you do not pass `--ida-plugin-dir`, root `install.sh` will still show the
   exact plugin source paths and the activation steps after copying.
+- The plugin defaults to `REMOTE_ACCESS = False`; this still allows localhost
+  and local WSL access, but rejects other machines. Only set it to `True` when
+  you intentionally want external access.

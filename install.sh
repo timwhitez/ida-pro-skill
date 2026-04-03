@@ -114,11 +114,26 @@ copy_plugin_if_requested() {
     return
   fi
 
-  mkdir -p "$IDA_PLUGIN_DIR"
-  rm -rf "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin.py" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin_runtime"
-  cp "$ROOT_DIR/plugin/ida_pro_skill_plugin.py" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin.py"
-  cp -R "$ROOT_DIR/plugin/ida_pro_skill_plugin_runtime" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin_runtime"
-  echo "Copied plugin into: ${IDA_PLUGIN_DIR}"
+  local copy_log
+  copy_log="$(mktemp)"
+
+  if {
+    mkdir -p "$IDA_PLUGIN_DIR" &&
+    rm -rf "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin.py" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin_runtime" &&
+    cp "$ROOT_DIR/plugin/ida_pro_skill_plugin.py" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin.py" &&
+    cp -R "$ROOT_DIR/plugin/ida_pro_skill_plugin_runtime" "${IDA_PLUGIN_DIR}/ida_pro_skill_plugin_runtime"
+  } 2>"$copy_log"; then
+    rm -f "$copy_log"
+    echo "Copied plugin into: ${IDA_PLUGIN_DIR}"
+    return
+  fi
+
+  echo "Warning: automatic plugin copy failed for: ${IDA_PLUGIN_DIR}" >&2
+  if [[ -s "$copy_log" ]]; then
+    sed 's/^/  /' "$copy_log" >&2
+  fi
+  rm -f "$copy_log"
+  echo "Warning: skill installation completed, but you still need to copy the plugin manually." >&2
 }
 
 print_install_summary() {
@@ -150,7 +165,7 @@ EOF
   cat <<'EOF'
 
 Plugin activation guide:
-  1. Copy the two plugin items above into IDA's plugins directory if you did not use --ida-plugin-dir.
+  1. Copy the two plugin items above into IDA's plugins directory if you did not use --ida-plugin-dir or if automatic copy failed.
   2. Restart IDA.
   3. Open any database.
   4. Check the Output window for a line like:
