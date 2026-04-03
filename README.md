@@ -11,6 +11,19 @@ client-side MCP setup.
 IDA Pro Skill 集成项目。它通过本地 skill 和轻量 IDA 插件桥接，让 AI
 代理直接对接正在运行的 IDA 数据库，而不要求用户先配置客户端 MCP。
 
+## Project Notes / 项目说明
+
+- This project was developed with Codex
+- It references and learned from
+  [`mrexodia/ida-pro-mcp`](https://github.com/mrexodia/ida-pro-mcp)
+- This repository ships a skill-first integration rather than an MCP-first
+  client setup
+
+- 当前项目由 Codex 开发
+- 实现思路参考并借鉴了
+  [`mrexodia/ida-pro-mcp`](https://github.com/mrexodia/ida-pro-mcp)
+- 当前仓库提供的是 skill-first 集成，而不是以 MCP 客户端配置为中心的形态
+
 ## Features / 特性
 
 - Skill installation for Codex, Claude Code, and OpenCode
