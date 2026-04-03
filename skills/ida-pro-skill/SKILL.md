@@ -1,6 +1,6 @@
 ---
 name: ida-pro-skill
-description: IDA Pro reverse-engineering skill for Codex, Claude Code, and OpenCode. Use when a user wants analysis against a live IDA database or Hex-Rays view, especially for metadata, cursor or selection context, entrypoints, functions, callers, imports, strings, xrefs, pseudocode, globals, structs, renames, comments, byte patches, function creation, or explicit IDAPython through the local ida-pro-skill CLI and installed IDA bridge, including WSL-to-Windows IDA setups.
+description: IDA Pro reverse-engineering skill for Codex, Claude Code, and OpenCode. Use when a user needs live IDA or Hex-Rays analysis through the local ida-pro-skill CLI and installed IDA bridge, especially for instance discovery, metadata, cursor or selection context, entrypoints, functions, callers, imports, strings, xrefs, pseudocode, globals, structs, renames, comments, byte patches, function creation, or explicit IDAPython, including WSL-to-Windows IDA setups.
 ---
 
 # ida-pro-skill
@@ -23,9 +23,13 @@ If the skill is not installed yet, the supported repo entrypoint is root
    `python3 scripts/run_cli.py doctor`
 2. Discover live IDA instances:
    `python3 scripts/run_cli.py ida list-instances`
-3. If multiple instances are running, select one:
+3. Immediately inspect the active bridge state:
+   `python3 scripts/run_cli.py ida metadata`
+   `python3 scripts/run_cli.py ida tools`
+   Read `access_mode` and `remote_access_enabled` before diagnosing connectivity.
+4. If multiple instances are running, select one:
    `python3 scripts/run_cli.py ida select --instance 127.0.0.1:39091`
-4. Prefer the short alias commands over raw JSON-heavy `ida tool ...` calls:
+5. Prefer the short alias commands over raw JSON-heavy `ida tool ...` calls:
    `python3 scripts/run_cli.py ida metadata`
    `python3 scripts/run_cli.py ida cursor`
    `python3 scripts/run_cli.py ida selection`
@@ -39,8 +43,8 @@ If the skill is not installed yet, the supported repo entrypoint is root
    `python3 scripts/run_cli.py ida struct IMAGE_DOS_HEADER`
    `python3 scripts/run_cli.py ida patch-bytes 0x401000 "90 90"`
    `python3 scripts/run_cli.py ida define-function 0x401000`
-5. Use `ida tool ...` only for advanced or not-yet-aliased operations.
-6. Use explicit Python only when the built-in tools are not enough:
+6. Use `ida tool ...` only for advanced or not-yet-aliased operations.
+7. Use explicit Python only when the built-in tools are not enough:
    `python3 scripts/run_cli.py ida py-eval "print(hex(here()))"`
    `cat script.py | python3 scripts/run_cli.py ida py-eval --stdin`
    `python3 scripts/run_cli.py ida py-file /tmp/script.py`
@@ -72,9 +76,15 @@ If the skill is not installed yet, the supported repo entrypoint is root
   CLI auto-selects it.
 - The CLI is WSL-aware and can reach a Windows-hosted IDA bridge through the
   advertised host candidates; do not assume `127.0.0.1` will work from WSL.
+- Check `ida metadata` or `ida tools` early; they expose `access_mode` and
+  `remote_access_enabled`, which are the fastest way to distinguish a bridge ACL
+  restriction from a normal connectivity issue.
 - The plugin now defaults to `REMOTE_ACCESS = False`; this still allows
   localhost and local WSL access, but intentionally rejects other machines
   unless the user explicitly enables remote access in the plugin file.
+- Do not suggest changing `REMOTE_ACCESS` just because WSL cannot use
+  `127.0.0.1`; first try the advertised host candidates. Only suggest enabling
+  remote access when the user explicitly wants other machines to connect.
 - Prefer one bridge call at a time for heavier work such as `decompile` or
   `py-eval`; the CLI no longer requires a fresh health probe for every tool
   call, but serial reads are still easier on a live IDA session.
