@@ -132,6 +132,21 @@ def build_parser() -> argparse.ArgumentParser:
     define_function_parser.add_argument("address")
     _add_instance_arg(define_function_parser)
 
+    export_ai_parser = ida_sub.add_parser("export-ai")
+    export_ai_parser.add_argument("output_dir", nargs="?")
+    export_ai_parser.add_argument("--query")
+    export_ai_parser.add_argument("--offset", type=int, default=0)
+    export_ai_parser.add_argument("--limit", type=int, default=100)
+    export_ai_parser.add_argument("--all-functions", action="store_true")
+    export_ai_parser.add_argument("--string-limit", type=int, default=1000)
+    export_ai_parser.add_argument("--all-strings", action="store_true")
+    export_ai_parser.add_argument("--min-string-length", type=int, default=4)
+    export_ai_parser.add_argument("--no-decompile", action="store_true")
+    export_ai_parser.add_argument("--max-function-bytes", type=int, default=16 * 1024)
+    export_ai_parser.add_argument("--max-instructions", type=int, default=3000)
+    export_ai_parser.add_argument("--timeout", type=float, default=120.0)
+    _add_instance_arg(export_ai_parser)
+
     py_eval_parser = ida_sub.add_parser("py-eval")
     py_eval_parser.add_argument("code", nargs="?")
     py_eval_parser.add_argument("--stdin", action="store_true")
@@ -280,6 +295,24 @@ def ida_command(app_home: Path, args: argparse.Namespace) -> Any:
         return _call_alias_tool(app_home, args, "patch_bytes", {"address": args.address, "hex": args.hex})
     if args.ida_command == "define-function":
         return _call_alias_tool(app_home, args, "define_function", {"address": args.address})
+    if args.ida_command == "export-ai":
+        return call_tool(
+            app_home,
+            "export_ai_context",
+            {
+                "output_dir": args.output_dir,
+                "query": args.query,
+                "offset": args.offset,
+                "limit": None if args.all_functions else args.limit,
+                "string_limit": None if args.all_strings else args.string_limit,
+                "min_string_length": args.min_string_length,
+                "include_decompile": not args.no_decompile,
+                "max_function_bytes": args.max_function_bytes,
+                "max_instructions": args.max_instructions,
+            },
+            instance=args.instance,
+            timeout=args.timeout,
+        )
     if args.ida_command == "py-eval":
         return _call_alias_tool(app_home, args, "py_eval", {"code": _py_eval_code(args)})
     if args.ida_command == "py-file":

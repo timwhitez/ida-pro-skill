@@ -147,12 +147,21 @@ def wsl_windows_home() -> Path | None:
     return resolved
 
 
+def _mounted_windows_instance_dirs() -> list[Path]:
+    mount_root = Path("/mnt")
+    if not mount_root.exists():
+        return []
+    return sorted(mount_root.glob(f"*/Users/*/{APP_DIR_NAME}/{INSTANCE_DIR_NAME}"))
+
+
 def instance_registry_dirs(app_home: Path) -> list[Path]:
     result = [instance_dir(app_home)]
     if is_wsl():
         windows_home = wsl_windows_home()
         if windows_home is not None:
             result.append(windows_home / APP_DIR_NAME / INSTANCE_DIR_NAME)
+        else:
+            result.extend(_mounted_windows_instance_dirs())
 
     unique: list[Path] = []
     seen: set[str] = set()

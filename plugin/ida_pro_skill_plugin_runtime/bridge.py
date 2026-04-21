@@ -4,6 +4,7 @@ import ast
 import io
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -19,6 +20,7 @@ import ida_bytes
 import ida_funcs
 import ida_hexrays
 import ida_kernwin
+import ida_lines
 import ida_loader
 import ida_nalt
 import ida_name
@@ -38,6 +40,10 @@ from ida_pro_skill_plugin_runtime.access import (
 APP_HOME = Path(os.environ.get("IDA_PRO_SKILL_HOME", str(Path.home() / ".ida-pro-skill")))
 INSTANCE_DIR = APP_HOME / "instances"
 LISTEN_HOST = "0.0.0.0"
+DEFAULT_EXPORT_FUNCTION_LIMIT = 100
+DEFAULT_EXPORT_STRING_LIMIT = 1000
+DEFAULT_MAX_FUNCTION_BYTES = 16 * 1024
+DEFAULT_MAX_INSTRUCTIONS = 3000
 
 
 def _now() -> str:
@@ -62,6 +68,79 @@ def _parse_address(raw: str | int) -> int:
         return int(text, 10)
     except ValueError as exc:
         raise ValueError(f"Unable to resolve address: {raw}") from exc
+
+
+def _safe_int(raw: Any, default: int) -> int:
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_limit(raw: Any, default: int) -> int | None:
+    if raw is None:
+        return None
+    value = _safe_int(raw, default)
+    if value < 0:
+        return 0
+    return value
+
+
+def _safe_bool(raw: Any, default: bool) -> bool:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(raw)
+
+
+def _safe_text_line(value: Any) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("\r", "\\r").replace("\n", "\\n")
+
+
+def _sanitize_filename(value: str) -> str:
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", value).strip(" ._")
+    if not safe:
+        safe = "unnamed"
+    return safe[:120]
+
+
+def _default_export_dir() -> Path:
+    idb_path = idc.get_idb_path() or ida_nalt.get_input_file_path() or ""
+    if idb_path:
+        base = Path(idb_path)
+        stem = base.stem or "ida-database"
+        return base.parent / f"{stem}.ida-ai"
+    return APP_HOME / "exports" / "active.ida-ai"
+
+
+def _resolve_export_dir(raw: Any) -> Path:
+    text = str(raw or "").strip()
+    if not text:
+        return _default_export_dir()
+    return Path(os.path.expanduser(text))
+
+
+def _write_json_file(path: Path, payload: Any) -> None:
+    _ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_jsonl_file(path: Path, rows: list[dict[str, Any]]) -> None:
+    _ensure_dir(path.parent)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _write_lines(path: Path, lines: list[str]) -> None:
+    _ensure_dir(path.parent)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _json_result(ok: bool, *, result: Any = None, error: str | None = None) -> bytes:
@@ -176,6 +255,7 @@ class BridgeServer:
             "rename": self.rename,
             "patch_bytes": self.patch_bytes,
             "define_function": self.define_function,
+            "export_ai_context": self.export_ai_context,
             "py_eval": self.py_eval,
             "py_exec_file": self.py_exec_file,
         }
@@ -565,6 +645,117 @@ class BridgeServer:
             raise RuntimeError(f"Failed to define function at {hex(ea)}")
         return {"address": hex(ea)}
 
+    def export_ai_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        ida_auto.auto_wait()
+        output_dir = _resolve_export_dir(arguments.get("output_dir"))
+        _ensure_dir(output_dir)
+        _ensure_dir(output_dir / "decompile")
+        _ensure_dir(output_dir / "disassembly")
+
+        query = str(arguments.get("query") or "").lower()
+        offset = max(0, _safe_int(arguments.get("offset"), 0))
+        limit = _optional_limit(
+            arguments.get("limit", DEFAULT_EXPORT_FUNCTION_LIMIT),
+            DEFAULT_EXPORT_FUNCTION_LIMIT,
+        )
+        string_limit = _optional_limit(
+            arguments.get("string_limit", DEFAULT_EXPORT_STRING_LIMIT),
+            DEFAULT_EXPORT_STRING_LIMIT,
+        )
+        min_string_length = max(0, _safe_int(arguments.get("min_string_length"), 4))
+        include_decompile = _safe_bool(arguments.get("include_decompile"), True)
+        max_function_bytes = _safe_int(arguments.get("max_function_bytes"), DEFAULT_MAX_FUNCTION_BYTES)
+        max_instructions = _safe_int(arguments.get("max_instructions"), DEFAULT_MAX_INSTRUCTIONS)
+
+        metadata = self.health()
+        _write_json_file(output_dir / "metadata.json", metadata)
+
+        imports = _collect_import_rows("")
+        exports = _collect_export_rows()
+        strings = _collect_string_rows(query="", min_length=min_string_length, limit=string_limit)
+
+        _write_jsonl_file(output_dir / "imports.jsonl", imports)
+        _write_jsonl_file(output_dir / "exports.jsonl", exports)
+        _write_jsonl_file(output_dir / "strings.jsonl", strings)
+        _write_imports_text(output_dir / "imports.txt", imports)
+        _write_exports_text(output_dir / "exports.txt", exports)
+        _write_strings_text(output_dir / "strings.txt", strings)
+
+        function_eas = _filtered_function_eas(query)
+        if limit is None:
+            selected_eas = function_eas[offset:]
+        else:
+            selected_eas = function_eas[offset : offset + limit]
+
+        function_rows = []
+        stats = {
+            "decompiled": 0,
+            "disassembly_fallback": 0,
+            "failed": 0,
+            "skipped": 0,
+        }
+        for ea in selected_eas:
+            try:
+                row = _export_function_for_ai(
+                    output_dir,
+                    ea,
+                    include_decompile=include_decompile,
+                    max_function_bytes=max_function_bytes,
+                    max_instructions=max_instructions,
+                )
+            except Exception as exc:
+                row = {
+                    "address": hex(ea),
+                    "name": ida_funcs.get_func_name(ea) or "",
+                    "status": "failed",
+                    "reason": str(exc),
+                }
+            function_rows.append(row)
+            if row.get("status") == "skipped":
+                stats["skipped"] += 1
+            elif row.get("status") == "failed":
+                stats["failed"] += 1
+            elif row.get("export_type") == "decompile":
+                stats["decompiled"] += 1
+            elif row.get("export_type") == "disassembly-fallback":
+                stats["disassembly_fallback"] += 1
+
+        _write_jsonl_file(output_dir / "function_index.jsonl", function_rows)
+        _write_function_index_text(output_dir / "function_index.txt", function_rows)
+
+        summary = {
+            "created_at": _now(),
+            "output_dir": str(output_dir),
+            "function_query": query or None,
+            "function_offset": offset,
+            "function_limit": limit,
+            "total_matching_functions": len(function_eas),
+            "selected_functions": len(selected_eas),
+            "decompiled": stats["decompiled"],
+            "disassembly_fallback": stats["disassembly_fallback"],
+            "skipped": stats["skipped"],
+            "failed": stats["failed"],
+            "strings_exported": len(strings),
+            "imports_exported": len(imports),
+            "exports_exported": len(exports),
+            "include_decompile": include_decompile,
+            "max_function_bytes": max_function_bytes,
+            "max_instructions": max_instructions,
+            "files": {
+                "metadata": "metadata.json",
+                "summary": "summary.json",
+                "functions": "function_index.jsonl",
+                "function_index": "function_index.txt",
+                "strings": "strings.jsonl",
+                "imports": "imports.jsonl",
+                "exports": "exports.jsonl",
+                "decompile_dir": "decompile",
+                "disassembly_dir": "disassembly",
+            },
+        }
+        _write_json_file(output_dir / "summary.json", summary)
+        return summary
+
     def py_eval(self, arguments: dict[str, Any]) -> dict[str, Any]:
         code = str(arguments["code"])
         return _execute_python(code=code)
@@ -602,7 +793,9 @@ def _collect_import_rows(query: str) -> list[dict[str, Any]]:
     return items
 
 
-def _collect_string_rows(*, query: str, min_length: int) -> list[dict[str, Any]]:
+def _collect_string_rows(*, query: str, min_length: int, limit: int | None = None) -> list[dict[str, Any]]:
+    if limit is not None and limit <= 0:
+        return []
     items = []
     for item in idautils.Strings():
         text = str(item)
@@ -611,7 +804,278 @@ def _collect_string_rows(*, query: str, min_length: int) -> list[dict[str, Any]]
         if query and query not in text.lower():
             continue
         items.append({"address": hex(item.ea), "text": text, "length": len(text)})
+        if limit is not None and len(items) >= limit:
+            break
     return items
+
+
+def _collect_export_rows() -> list[dict[str, Any]]:
+    rows = []
+    for idx in range(idaapi.get_entry_qty()):
+        ordinal = idaapi.get_entry_ordinal(idx)
+        ea = idaapi.get_entry(ordinal)
+        name = idaapi.get_entry_name(ordinal) or f"ordinal_{ordinal}"
+        rows.append({"ordinal": ordinal, "address": hex(ea), "name": name})
+    return rows
+
+
+def _filtered_function_eas(query: str) -> list[int]:
+    result = []
+    for ea in idautils.Functions():
+        name = ida_funcs.get_func_name(ea) or ""
+        if query and query not in name.lower() and query not in hex(ea):
+            continue
+        result.append(ea)
+    return result
+
+
+def _export_function_for_ai(
+    output_dir: Path,
+    ea: int,
+    *,
+    include_decompile: bool,
+    max_function_bytes: int,
+    max_instructions: int,
+) -> dict[str, Any]:
+    func = ida_funcs.get_func(ea)
+    name = ida_funcs.get_func_name(ea) or hex(ea)
+    base_row: dict[str, Any] = {"address": hex(ea), "name": name}
+    if not func:
+        return {**base_row, "status": "skipped", "reason": "not a valid function"}
+    if func.flags & ida_funcs.FUNC_LIB:
+        return {**base_row, "status": "skipped", "reason": "library function"}
+
+    func_size = func.end_ea - func.start_ea
+    fallback_reason = None
+    body = None
+    export_type = None
+
+    if not include_decompile:
+        fallback_reason = "decompile disabled by request"
+    elif max_function_bytes > 0 and func_size > max_function_bytes:
+        fallback_reason = f"function too large ({func_size} bytes, limit {max_function_bytes} bytes)"
+    else:
+        instruction_count = _count_function_items_limited(func.start_ea, max_instructions)
+        if max_instructions > 0 and instruction_count > max_instructions:
+            fallback_reason = f"too many instructions (>{max_instructions}, limit {max_instructions})"
+
+    if fallback_reason is None:
+        body, decompile_error = _decompile_function_text(func.start_ea)
+        if decompile_error:
+            fallback_reason = decompile_error
+        elif not body or not body.strip():
+            fallback_reason = "empty decompilation result"
+        else:
+            export_type = "decompile"
+
+    if body is None:
+        body, disassembly_error = _generate_function_disassembly_text(func.start_ea)
+        if body is None:
+            reason = fallback_reason or "decompilation failed"
+            if disassembly_error:
+                reason = f"{reason}; disasm fallback failed: {disassembly_error}"
+            return {**base_row, "status": "failed", "reason": reason}
+        export_type = "disassembly-fallback"
+
+    callers = _function_callers(func.start_ea)
+    callees = _function_callees(func.start_ea)
+    relative_path = _write_function_source(
+        output_dir,
+        func.start_ea,
+        name,
+        export_type or "disassembly-fallback",
+        body,
+        callers,
+        callees,
+        fallback_reason=fallback_reason,
+    )
+    row = {
+        **base_row,
+        "status": "exported",
+        "address": hex(func.start_ea),
+        "name": name,
+        "size": func_size,
+        "export_type": export_type or "disassembly-fallback",
+        "file": relative_path,
+        "callers": [hex(item) for item in callers],
+        "callees": [hex(item) for item in callees],
+    }
+    if fallback_reason:
+        row["fallback_reason"] = fallback_reason
+    return row
+
+
+def _count_function_items_limited(func_ea: int, limit: int) -> int:
+    count = 0
+    for _item in idautils.FuncItems(func_ea):
+        count += 1
+        if limit > 0 and count > limit:
+            break
+    return count
+
+
+def _decompile_function_text(func_ea: int) -> tuple[str | None, str | None]:
+    try:
+        if not ida_hexrays.init_hexrays_plugin():
+            return None, "Hex-Rays decompiler is not available"
+        flags = getattr(ida_hexrays, "DECOMP_NO_WAIT", 0x0001)
+        try:
+            cfunc = ida_hexrays.decompile(func_ea, None, flags)
+        except TypeError:
+            cfunc = ida_hexrays.decompile(func_ea)
+        if not cfunc:
+            return None, "decompile returned None"
+        return str(cfunc), None
+    except Exception as exc:
+        return None, f"decompilation failure: {exc}"
+
+
+def _generate_function_disassembly_text(func_ea: int) -> tuple[str | None, str | None]:
+    func = ida_funcs.get_func(func_ea)
+    if not func:
+        return None, "not a valid function"
+
+    lines = []
+    for item_ea in idautils.FuncItems(func.start_ea):
+        line = None
+        try:
+            line = ida_lines.generate_disasm_line(
+                item_ea,
+                getattr(ida_lines, "GENDSM_FORCE_CODE", 0) | getattr(ida_lines, "GENDSM_REMOVE_TAGS", 0),
+            )
+        except Exception:
+            line = idc.generate_disasm_line(item_ea, 0)
+        if line:
+            try:
+                line = ida_lines.tag_remove(line).rstrip()
+            except Exception:
+                line = str(line).rstrip()
+        if not line:
+            line = "<unable to render disassembly>"
+        lines.append(f"{item_ea:X}: {line}")
+    if not lines:
+        return None, "function has no items"
+    return "\n".join(lines), None
+
+
+def _write_function_source(
+    output_dir: Path,
+    func_ea: int,
+    name: str,
+    export_type: str,
+    body: str,
+    callers: list[int],
+    callees: list[int],
+    *,
+    fallback_reason: str | None,
+) -> str:
+    extension = "asm" if export_type == "disassembly-fallback" else "c"
+    subdir = "disassembly" if export_type == "disassembly-fallback" else "decompile"
+    file_name = f"{func_ea:X}_{_sanitize_filename(name)}.{extension}"
+    relative_path = f"{subdir}/{file_name}"
+    lines = [
+        "/*",
+        f" * func-name: {name}",
+        f" * func-address: {hex(func_ea)}",
+        f" * export-type: {export_type}",
+        f" * callers: {_format_address_list(callers) if callers else 'none'}",
+        f" * callees: {_format_address_list(callees) if callees else 'none'}",
+    ]
+    if fallback_reason:
+        lines.append(f" * fallback-reason: {fallback_reason}")
+    lines.extend([" */", "", body])
+    _write_lines(output_dir / relative_path, lines)
+    return relative_path
+
+
+def _function_callers(func_ea: int) -> list[int]:
+    callers = []
+    for ref in idautils.XrefsTo(func_ea, 0):
+        if not ida_bytes.is_code(ida_bytes.get_full_flags(ref.frm)):
+            continue
+        caller = ida_funcs.get_func(ref.frm)
+        if caller:
+            callers.append(caller.start_ea)
+    return sorted(set(callers))
+
+
+def _function_callees(func_ea: int) -> list[int]:
+    callees = []
+    func = ida_funcs.get_func(func_ea)
+    if not func:
+        return callees
+    for head in idautils.FuncItems(func.start_ea):
+        if not ida_bytes.is_code(ida_bytes.get_full_flags(head)):
+            continue
+        for ref in idautils.XrefsFrom(head, 0):
+            if ref.type not in (ida_xref.fl_CF, ida_xref.fl_CN):
+                continue
+            callee = ida_funcs.get_func(ref.to)
+            if callee:
+                callees.append(callee.start_ea)
+    return sorted(set(callees))
+
+
+def _format_address_list(addresses: list[int]) -> str:
+    return ", ".join(hex(item) for item in addresses)
+
+
+def _write_strings_text(path: Path, rows: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Strings exported from IDA",
+        "# Format: address | length | string",
+        "#" + "=" * 80,
+        "",
+    ]
+    for row in rows:
+        lines.append(f"{row['address']} | {row['length']} | {_safe_text_line(row['text'])}")
+    _write_lines(path, lines)
+
+
+def _write_imports_text(path: Path, rows: list[dict[str, Any]]) -> None:
+    lines = ["# Imports", "# Format: address | module | name", "#" + "=" * 80, ""]
+    for row in rows:
+        lines.append(
+            f"{row['address']} | {_safe_text_line(row.get('module'))} | {_safe_text_line(row.get('name'))}"
+        )
+    _write_lines(path, lines)
+
+
+def _write_exports_text(path: Path, rows: list[dict[str, Any]]) -> None:
+    lines = ["# Exports", "# Format: address | ordinal | name", "#" + "=" * 80, ""]
+    for row in rows:
+        lines.append(f"{row['address']} | {row['ordinal']} | {_safe_text_line(row.get('name'))}")
+    _write_lines(path, lines)
+
+
+def _write_function_index_text(path: Path, rows: list[dict[str, Any]]) -> None:
+    lines = [
+        "# Function Index",
+        "# Format: address | status | export_type | file | name",
+        "#" + "=" * 100,
+        "",
+    ]
+    for row in rows:
+        lines.append(
+            " | ".join(
+                [
+                    str(row.get("address", "")),
+                    str(row.get("status", "")),
+                    str(row.get("export_type", "")),
+                    str(row.get("file", "")),
+                    _safe_text_line(row.get("name", "")),
+                ]
+            )
+        )
+        if row.get("fallback_reason"):
+            lines.append(f"  fallback-reason: {_safe_text_line(row['fallback_reason'])}")
+        if row.get("reason"):
+            lines.append(f"  reason: {_safe_text_line(row['reason'])}")
+        if row.get("callers"):
+            lines.append(f"  callers: {', '.join(row['callers'])}")
+        if row.get("callees"):
+            lines.append(f"  callees: {', '.join(row['callees'])}")
+    _write_lines(path, lines)
 
 
 def _ordinal_limit(idati) -> int:
@@ -664,6 +1128,7 @@ def _execute_python(code: str, file_name: str = "<string>") -> dict[str, Any]:
         "ida_segment": ida_segment,
         "ida_typeinf": ida_typeinf,
         "ida_xref": ida_xref,
+        "here": idc.here if hasattr(idc, "here") else ida_kernwin.get_screen_ea,
     }
     result_value = ""
     try:

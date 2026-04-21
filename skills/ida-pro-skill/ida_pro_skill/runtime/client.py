@@ -12,6 +12,8 @@ from typing import Any
 from ..common import IdaProSkillError, ensure_dir, instance_registry_dirs, is_wsl, read_json
 from ..state import load_state, save_state
 
+DEFAULT_HTTP_TIMEOUT_SECONDS = 30.0
+
 
 def list_instances(app_home: Path) -> list[dict[str, Any]]:
     result = _registry_instances(app_home)
@@ -55,12 +57,20 @@ def current_instance(app_home: Path) -> dict[str, Any]:
     raise IdaProSkillError("Multiple reachable IDA instances were found; select one explicitly")
 
 
-def call_tool(app_home: Path, name: str, arguments: dict[str, Any] | None, *, instance: str | None) -> Any:
+def call_tool(
+    app_home: Path,
+    name: str,
+    arguments: dict[str, Any] | None,
+    *,
+    instance: str | None,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
+) -> Any:
     target = _resolve_tool_target(app_home, instance)
     response, _connected_host = _call_instance(
         target,
         "/tool",
         payload={"name": name, "arguments": arguments or {}},
+        timeout=timeout,
     )
     if not response.get("ok"):
         raise IdaProSkillError(response.get("error", "Bridge call failed"))
@@ -143,12 +153,20 @@ def _call_instance(
     path: str,
     *,
     payload: dict[str, Any] | None,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
 ) -> tuple[dict[str, Any], str]:
     errors: list[str] = []
     port = int(instance["port"])
     for host in _instance_host_candidates(instance):
         try:
-            response = _http_json("POST" if payload is not None else "GET", host, port, path, payload)
+            response = _http_json(
+                "POST" if payload is not None else "GET",
+                host,
+                port,
+                path,
+                payload,
+                timeout=timeout,
+            )
             return response, host
         except IdaProSkillError as exc:
             errors.append(str(exc))
@@ -217,6 +235,8 @@ def _http_json(
     port: int,
     path: str,
     payload: dict[str, Any] | None = None,
+    *,
+    timeout: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     url = urllib.parse.urlunparse(("http", f"{host}:{port}", path, "", "", ""))
     data = None
@@ -226,7 +246,7 @@ def _http_json(
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
     except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
         raise IdaProSkillError(f"Failed to reach {url}: {exc}") from exc

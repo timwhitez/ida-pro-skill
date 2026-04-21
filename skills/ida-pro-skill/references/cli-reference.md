@@ -28,6 +28,31 @@
 - `python3 scripts/run_cli.py ida structs --query IMAGE --limit 20`
 - `python3 scripts/run_cli.py ida struct IMAGE_DOS_HEADER`
 
+## Offline AI context export
+
+- `python3 scripts/run_cli.py ida export-ai`
+- `python3 scripts/run_cli.py ida export-ai ./ida-ai-context --limit 100`
+- `python3 scripts/run_cli.py ida export-ai --query decrypt --limit 50`
+- `python3 scripts/run_cli.py ida export-ai --all-functions --all-strings --timeout 300`
+
+`ida export-ai` writes a filesystem context pack from the running IDA process:
+
+- `metadata.json`
+- `summary.json`
+- `function_index.jsonl` and `function_index.txt`
+- `decompile/*.c`
+- `disassembly/*.asm`
+- `strings.jsonl` / `strings.txt`
+- `imports.jsonl` / `imports.txt`
+- `exports.jsonl` / `exports.txt`
+
+The exporter borrows IDA-NO-MCP's AI-friendly pattern of per-function source
+files with decompile-first and disassembly-fallback behavior. Defaults are
+bounded (`--limit 100`, `--string-limit 1000`) so a bridge call does not
+accidentally become a whole-IDB export. `output_dir` is interpreted by the IDA
+process, not by the client shell; omit it to create an export directory next to
+the current IDB.
+
 ## Write tools
 
 - `python3 scripts/run_cli.py ida rename 0x401000 decrypt_config`

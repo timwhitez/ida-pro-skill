@@ -31,6 +31,10 @@ IDA Pro Skill 集成项目。它通过本地 skill 和轻量 IDA 插件桥接，
 - Stdlib-only runtime path
 - Agent-friendly short commands
 - WSL-aware discovery for Windows-hosted IDA sessions
+- Bounded offline AI context export inspired by
+  [`P4nda0s/IDA-NO-MCP`](https://github.com/P4nda0s/IDA-NO-MCP): per-function
+  decompile files, disassembly fallback, strings, imports, exports, and summary
+  indexes
 - Built-in support for metadata, entrypoints, functions, callers, imports,
   strings, xrefs, globals, decompilation, disassembly, structs, renames,
   comments, byte patches, function creation, and explicit IDAPython fallback
@@ -40,6 +44,10 @@ IDA Pro Skill 集成项目。它通过本地 skill 和轻量 IDA 插件桥接，
 - 运行时仅依赖 Python 标准库
 - 更适合代理调用的短命令界面
 - 支持 WSL 到 Windows IDA 的实例发现
+- 增加有边界的离线 AI 上下文导出能力，参考
+  [`P4nda0s/IDA-NO-MCP`](https://github.com/P4nda0s/IDA-NO-MCP) 的
+  decompile / disassembly fallback 思路，输出函数源码、字符串、导入、导出与
+  摘要索引
 - 内置支持元数据、入口点、函数、调用者、导入、字符串、xref、全局变量、
   反编译、反汇编、结构体、重命名、注释、补丁、函数定义，以及显式回退到
   IDAPython
@@ -225,25 +233,50 @@ python3 skills/ida-pro-skill/scripts/run_cli.py ida string-xrefs kernel32.dll
 python3 skills/ida-pro-skill/scripts/run_cli.py ida decompile 0x401000
 python3 skills/ida-pro-skill/scripts/run_cli.py ida structs --query GUID --limit 10
 python3 skills/ida-pro-skill/scripts/run_cli.py ida struct GUID
+python3 skills/ida-pro-skill/scripts/run_cli.py ida export-ai --limit 100
 printf 'print(hex(0x401000))\n' | python3 skills/ida-pro-skill/scripts/run_cli.py ida py-eval --stdin
 ```
+
+`ida export-ai` writes an AI-readable context pack from the running IDA process:
+
+- `metadata.json`
+- `summary.json`
+- `function_index.jsonl` and `function_index.txt`
+- `decompile/*.c`
+- `disassembly/*.asm`
+- `strings.jsonl` / `strings.txt`
+- `imports.jsonl` / `imports.txt`
+- `exports.jsonl` / `exports.txt`
+
+Defaults are intentionally bounded (`--limit 100`, `--string-limit 1000`) so a
+single bridge call does not accidentally export an entire large IDB. Use
+`--query`, `--limit`, and explicit output directories for focused handoffs; use
+`--all-functions` or `--all-strings` only when a full export is intended.
+
+When IDA runs on Windows and the agent shell runs in WSL, `output_dir` is
+interpreted by the Windows IDA process. If unsure, omit `output_dir`; the plugin
+will create an export directory next to the active IDB.
 
 ## Runtime Notes / 运行时说明
 
 - WSL is supported
 - When Windows IDA is not reachable via `127.0.0.1`, the client can use the
   bridge's advertised host candidates
+- When WSL cannot execute `cmd.exe`, the client can still discover existing
+  Windows-side `.ida-pro-skill/instances` files from mounted user directories
 - Tool calls reuse the selected or sole discovered instance when possible,
   instead of forcing a new health probe every time
-- Heavy bridge calls such as `decompile`, `disassemble`, and `py-eval` are best
-  used serially
+- Heavy bridge calls such as `decompile`, `disassemble`, `export-ai`, and
+  `py-eval` are best used serially
 
 - 支持 WSL
 - 当 Windows IDA 无法通过 `127.0.0.1` 访问时，客户端会尝试 bridge 广播的
   host candidates
+- 当 WSL 无法执行 `cmd.exe` 时，客户端仍会从已挂载的 Windows 用户目录中查找
+  `.ida-pro-skill/instances` 实例文件
 - 在可能的情况下，工具调用会复用已选中或唯一发现的实例，而不是每次强制
   新做一次 health probe
-- `decompile`、`disassemble`、`py-eval` 这类重操作最好串行执行
+- `decompile`、`disassemble`、`export-ai`、`py-eval` 这类重操作最好串行执行
 
 ## Troubleshooting / 故障排查
 
